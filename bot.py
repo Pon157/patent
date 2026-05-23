@@ -1,4 +1,4 @@
-(venv) root@msk-1-vm-3agm:~/patent# cat patent.py
+
 import os
 import sqlite3
 import random
