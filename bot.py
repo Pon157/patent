@@ -267,6 +267,10 @@ def send_welcome(message):
     if is_user_banned(message.from_user.id):
         return bot.send_message(message.chat.id, f"{E['ban']} Вы заблокированы.")
 
+    # Отправка стикера перед основным сообщением
+    sticker_id = "CAACAgIAAxkBAAEEJCRqEej-8vUY010oQBTHo1daHAvmbQACX38AApvFYUtPfKF5IUox3jsE"
+    bot.send_sticker(message.chat.id, sticker_id)
+
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("KMBP-"):
         patent_number = args[1].upper()
