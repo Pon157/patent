@@ -399,7 +399,7 @@ def get_patent_content(message):
         message.chat.id, 
         f"{E['siren']} Отлично! Теперь отправьте <b>доказательства</b> (фото, файл или ссылку), что это именно ваша разработка:", 
         parse_mode="HTML"
-    )"
+    )
 @bot.message_handler(state=PatentStates.proof)
 def get_proof(message):
     bot.add_data(message.from_user.id, message.chat.id, proof=message.text)
