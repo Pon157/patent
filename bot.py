@@ -408,7 +408,7 @@ def admin_resolve_patent(call):
 def process_start_patent(call):
     if is_user_banned(call.from_user.id): return
     bot.set_state(call.from_user.id, PatentStates.name, call.message.chat.id)
-    bot.edit_message_text(f"{E['pencil']} Начнем! Введите ваше <b>ФИО</b>:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+    bot.edit_message_text(f"{E['pencil']} Начнем! Введите ваше <b>имя</b>:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.name)
 def get_name(message):
@@ -510,7 +510,7 @@ def final_generation(call):
     cert_image = generate_certificate(patent_number, name, project_name, patent_type, date_created)
     
     # Кнопка "Поделиться"
-    share_text = f"✨ Мы зарегистрировали патент на проект «{project_name}» в боте @{BOT_USERNAME}.\nПросмотреть Вы можете по ссылке: https://t.me/{BOT_USERNAME}?start={patent_number}"
+    share_text = f"✨ Мы зарегистрировали патент на проект «{project_name}» в боте @{BOT_USERNAME}."
     share_url = f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}?start={patent_number}&text={urllib.parse.quote(share_text)}"
     
     markup = telebot.types.InlineKeyboardMarkup()
