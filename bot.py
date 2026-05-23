@@ -136,39 +136,44 @@ class AdminStates(StatesGroup):
 
 # --- 5. ГЕНЕРАЦИЯ СЕРТИФИКАТА ---
 def generate_certificate(patent_number, name, project_name, patent_type, date_str):
+    # Добавим дебаг: если в консоли пусто, значит проблема в данных, а не в шрифте
+    print(f"DEBUG: Data -> {name}, {project_name}, {patent_type}, {patent_number}")
+    
     img = Image.new('RGB', (1000, 700), color=(240, 248, 255))
     draw = ImageDraw.Draw(img)
 
-    # Используем стандартный шрифт, если кастомные не найдены
-    font_title = ImageFont.load_default()
-    font_text = ImageFont.load_default()
-    font_highlight = ImageFont.load_default()
-
-    # Попытка загрузки шрифта
-    try:
-        font_title = ImageFont.truetype("arial.ttf", 60)
-        font_text = ImageFont.truetype("arial.ttf", 30)
-        font_highlight = ImageFont.truetype("arial.ttf", 35)
-    except: pass
+    # 1. Укажи путь к шрифту (загрузи arial.ttf в папку /root/patent/)
+    font_path = os.path.join(os.path.dirname(__file__), "arial.ttf")
+    
+    # Если файла нет, используем default, но с предупреждением
+    if not os.path.exists(font_path):
+        print(f"ВНИМАНИЕ: Файл шрифта {font_path} не найден!")
+        font_title = ImageFont.load_default()
+        font_text = ImageFont.load_default()
+        font_highlight = ImageFont.load_default()
+    else:
+        font_title = ImageFont.truetype(font_path, 60)
+        font_text = ImageFont.truetype(font_path, 30)
+        font_highlight = ImageFont.truetype(font_path, 35)
 
     # Рамки
     draw.rectangle([30, 30, 970, 670], outline=(70, 130, 180), width=15)
     
-    # Заголовок (по центру)
+    # Заголовок
     draw.text((500, 100), "ПАТЕНТ КМБП", font=font_title, fill=(25, 25, 112), anchor="mm")
 
-    # Текст (по левому краю)
+    # Рисуем текст
     x_start = 100
     y = 200
     step = 50
 
     def draw_line(label, value, y_pos):
         draw.text((x_start, y_pos), label, font=font_text, fill=(100, 100, 100))
-        draw.text((x_start + 300, y_pos), value, font=font_highlight, fill=(0, 0, 0))
+        draw.text((x_start + 300, y_pos), str(value), font=font_highlight, fill=(0, 0, 0))
 
     draw_line("Владелец:", name, y)
     draw_line("Проект:", project_name, y + step)
-    draw_line("Тип патента:", patent_type, y + step*2) # НОВОЕ ПОЛЕ
+    draw_line("Тип патента:", patent_type, y + step*2)
     draw_line("Номер:", patent_number, y + step*3)
     draw_line("Дата:", date_str, y + step*4)
 
