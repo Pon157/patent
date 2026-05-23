@@ -3,6 +3,7 @@ import sqlite3
 import random
 import string
 import urllib.parse
+import time
 from datetime import datetime
 from io import BytesIO
 
@@ -14,7 +15,7 @@ from telebot import apihelper
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 
-# --- 1. ЗАГРУЗКА НАСТРОЕК И ПРОКСИ ---
+# --- 1. ЗАГРУЗКА НАСТРОЕК ---
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")
@@ -23,7 +24,6 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 if not BOT_TOKEN:
     raise ValueError("Пожалуйста, добавьте BOT_TOKEN в файл .env")
 
-# Безопасное преобразование ADMIN_ID в число
 try:
     ADMIN_ID = int(ADMIN_ID) if ADMIN_ID else 0
 except ValueError:
@@ -41,7 +41,7 @@ DB_NAME = "patents.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Таблица патентов
+    # Обновленная таблица с новыми полями для проверок и контента
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS patents (
             patent_number TEXT PRIMARY KEY,
@@ -51,14 +51,16 @@ def init_db():
             project_name TEXT,
             project_link TEXT,
             proof TEXT,
+            proof_type TEXT,
+            patent_content TEXT,
             management_links TEXT,
             permission TEXT,
-            patent_type TEXT,        -- <--- ЭТА СТРОКА НОВАЯ
+            patent_type TEXT,
             date_created TEXT,
-            cert_file_id TEXT
+            cert_file_id TEXT,
+            status TEXT DEFAULT 'APPROVED'
         )
     ''')
-    # Таблица заблокированных пользователей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS banned_users (
             user_id INTEGER PRIMARY KEY
@@ -69,7 +71,6 @@ def init_db():
 
 init_db()
 
-# Проверка, забанен ли пользователь
 def is_user_banned(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -78,7 +79,7 @@ def is_user_banned(user_id):
     conn.close()
     return bool(result)
 
-# --- 3. ПРЕМИУМ КНОПКИ И ЭМОДЗИ ---
+# --- 3. ПРЕМИУМ ЭМОДЗИ (ОБНОВЛЕННЫЙ СПИСОК) ---
 def p_emoji(emoji_char, emoji_id):
     return f'<tg-emoji emoji-id="{emoji_id}">{emoji_char}</tg-emoji>'
 
@@ -96,9 +97,16 @@ E = {
     "rainbow": p_emoji("🌈", "5409109841538994759"),
     "calendar": p_emoji("🗓", "5413879192267805083"),
     "siren": p_emoji("🚨", "5395695537687123235"),
+    "ban": p_emoji("⛔️", "5456302074604035284"),
+    # Новые добавленные эмодзи
     "pencil": p_emoji("✏️", "5395444784611480792"),
-    "shield": p_emoji("🛡", "5438496463044752972"),
-    "ban": p_emoji("⛔️", "5456302074604035284")
+    "flag": p_emoji("🚩", "5460755126761312667"),
+    "hourglass": p_emoji("⌛", "5386367538735104399"),
+    "id": p_emoji("🆔", "5965485570124681987"),
+    "user": p_emoji("👤", "5974048815789903111"),
+    "rocket": p_emoji("🚀", "5195033767969839232"),
+    "lock": p_emoji("🔒", "5348223165380179822"),
+    "tag": p_emoji("🏷", "5215499540538340336")
 }
 
 class StyledInlineKeyboardButton(telebot.types.InlineKeyboardButton):
@@ -121,70 +129,76 @@ BTN_E_PRIMARY = "5285430309720966085"
 class PatentStates(StatesGroup):
     name = State()
     username = State()
-    patent_type = State()
     project_name = State()
     project_link = State()
+    patent_type = State()
+    patent_content = State()
     proof = State()
     management_links = State()
     check_patent_number = State()
-    patent_content = State()
 
 class AdminStates(StatesGroup):
     delete_patent = State()
     ban_user = State()
     unban_user = State()
 
-# --- 5. ГЕНЕРАЦИЯ СЕРТИФИКАТА ---
+# --- 5. ГЕНЕРАЦИЯ СЕРТИФИКАТА (УЛУЧШЕННАЯ) ---
 def generate_certificate(patent_number, name, project_name, patent_type, date_str):
-    print(f"DEBUG: Data -> {name}, {project_name}, {patent_type}, {patent_number}")
-    
-    img = Image.new('RGB', (1000, 700), color=(240, 248, 255))
+    # Увеличенное разрешение для качества
+    img = Image.new('RGB', (1000, 700), color=(245, 248, 252))
     draw = ImageDraw.Draw(img)
 
-    # Используем системный шрифт, найденный на сервере
+    # Рисуем геометрический паттерн на фоне
+    for i in range(0, 1000, 40):
+        draw.line([(i, 0), (i, 700)], fill=(235, 240, 248), width=1)
+    for i in range(0, 700, 40):
+        draw.line([(0, i), (1000, i)], fill=(235, 240, 248), width=1)
+
     font_path = "/usr/share/fonts/truetype/lato/Lato-Medium.ttf"
-    
     try:
-        # Пытаемся загрузить шрифт
-        font_title = ImageFont.truetype(font_path, 60)
+        font_title = ImageFont.truetype(font_path, 65)
         font_text = ImageFont.truetype(font_path, 30)
         font_highlight = ImageFont.truetype(font_path, 35)
-    except Exception as e:
-        print(f"DEBUG: Ошибка загрузки системного шрифта {font_path}: {e}. Использую дефолтный.")
+        font_small = ImageFont.truetype(font_path, 20)
+    except:
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
         font_highlight = ImageFont.load_default()
+        font_small = ImageFont.load_default()
 
-    # Рамки
-    draw.rectangle([30, 30, 970, 670], outline=(70, 130, 180), width=15)
+    # Двойная рамка для солидности
+    draw.rectangle([30, 30, 970, 670], outline=(70, 130, 180), width=12)
+    draw.rectangle([45, 45, 955, 655], outline=(176, 196, 222), width=3)
     
-    # Заголовок (по центру)
-    draw.text((500, 100), "ПАТЕНТ КМБП", font=font_title, fill=(25, 25, 112), anchor="mm")
+    # Заголовок
+    draw.text((500, 110), "ПАТЕНТ КМБП", font=font_title, fill=(25, 25, 112), anchor="mm")
+    draw.line([(300, 160), (700, 160)], fill=(70, 130, 180), width=3)
 
-    # Рисуем текст
-    x_start = 100
-    y = 200
-    step = 50
-
+    # Текст
+    x_start, y, step = 120, 230, 60
     def draw_line(label, value, y_pos):
         draw.text((x_start, y_pos), label, font=font_text, fill=(100, 100, 100))
-        draw.text((x_start + 300, y_pos), str(value), font=font_highlight, fill=(0, 0, 0))
+        draw.text((x_start + 280, y_pos), str(value), font=font_highlight, fill=(0, 0, 0))
 
     draw_line("Владелец:", name, y)
     draw_line("Проект:", project_name, y + step)
-    draw_line("Тип патента:", patent_type, y + step*2)
-    draw_line("Номер:", patent_number, y + step*3)
-    draw_line("Дата:", date_str, y + step*4)
+    draw_line("Категория:", patent_type, y + step*2)
+    draw_line("Рег. номер:", patent_number, y + step*3)
+    draw_line("Дата выдачи:", date_str, y + step*4)
+
+    # Водяной знак бота снизу
+    draw.text((500, 630), "Verified by @patent_kmbpbot", font=font_small, fill=(150, 160, 170), anchor="mm")
 
     bio = BytesIO()
     img.save(bio, format='PNG')
     bio.seek(0)
     return bio
+
 # --- 6. ОСНОВНОЕ МЕНЮ ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     if is_user_banned(message.from_user.id):
-        bot.send_message(message.chat.id, f"{E['ban']} Вы заблокированы и не можете использовать этого бота.")
+        bot.send_message(message.chat.id, f"{E['ban']} Вы заблокированы.")
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
@@ -201,26 +215,23 @@ def send_welcome(message):
         message.chat.id, 
         f"{E['star']} <b>Добро пожаловать в систему Патент КМБП!</b>\n\n"
         f"Здесь вы можете официально запатентовать название и идею вашего проекта, "
-        f"а также управлять своими патентами. Выберите действие ниже:", 
-        reply_markup=markup,
-        parse_mode="HTML"
+        f"а также управлять своими патентами. Выберите действие:", 
+        reply_markup=markup, parse_mode="HTML"
     )
 
-# --- 7. АДМИН-ПАНЕЛЬ (ID OWNER) ---
+# --- 7. АДМИН-ПАНЕЛЬ И АНТИПЛАГИАТ ---
 @bot.message_handler(commands=['adminka'])
 def admin_start(message):
-    # Проверка на права администратора
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, f"{E['error']} У вас нет прав для доступа к админ-панели.")
+        bot.send_message(message.chat.id, f"{E['error']} Отказано в доступе.")
         return
-    
     show_admin_panel(message.chat.id)
 
 def show_admin_panel(chat_id, message_id=None):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
         StyledInlineKeyboardButton("Статистика", callback_data="adm_stats", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY),
-        StyledInlineKeyboardButton("Удалить патент", callback_data="adm_delete", style="danger", icon_custom_emoji_id=BTN_E_DANGER)
+        StyledInlineKeyboardButton("Удалить", callback_data="adm_delete", style="danger", icon_custom_emoji_id=BTN_E_DANGER)
     )
     markup.row(
         StyledInlineKeyboardButton("Забанить", callback_data="adm_ban", style="danger", icon_custom_emoji_id=BTN_E_DANGER),
@@ -228,7 +239,7 @@ def show_admin_panel(chat_id, message_id=None):
     )
     markup.row(StyledInlineKeyboardButton("Закрыть панель", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
     
-    text = f"{E['shield']} <b>Панель администратора</b>\nВыберите необходимое действие:"
+    text = f"{E['lock']} <b>Панель администратора</b>\nВыберите действие:"
     if message_id:
         bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="HTML")
     else:
@@ -237,40 +248,39 @@ def show_admin_panel(chat_id, message_id=None):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
 def admin_callbacks(call):
     if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "Отказано в доступе.", show_alert=True)
-        return
+        return bot.answer_callback_query(call.id, "Доступ закрыт", show_alert=True)
 
     if call.data == "adm_stats":
         conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM patents")
-        total_patents = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM patents")
-        total_users = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM banned_users")
-        total_banned = cursor.fetchone()[0]
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM patents")
+        total = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM patents WHERE status='PENDING'")
+        pending = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM banned_users")
+        banned = c.fetchone()[0]
         conn.close()
         
         markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(StyledInlineKeyboardButton("Назад в админку", callback_data="adm_back", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
+        markup.add(StyledInlineKeyboardButton("Назад", callback_data="adm_back", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
         
-        text = (f"{E['chart']} <b>Статистика системы:</b>\n\n"
-                f"📝 Всего патентов: <b>{total_patents}</b>\n"
-                f"👤 Пользователей (с патентами): <b>{total_users}</b>\n"
-                f"⛔️ В бане: <b>{total_banned}</b>")
+        text = (f"{E['chart']} <b>Статистика:</b>\n\n"
+                f"📝 Всего патентов: <b>{total}</b>\n"
+                f"⌛ Ожидают проверки: <b>{pending}</b>\n"
+                f"⛔️ В бане: <b>{banned}</b>")
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
         
     elif call.data == "adm_delete":
         bot.set_state(call.from_user.id, AdminStates.delete_patent, call.message.chat.id)
-        bot.send_message(call.message.chat.id, "Введите номер патента для удаления (например, KMBP-1234567):")
+        bot.send_message(call.message.chat.id, f"{E['pencil']} Введите номер патента для удаления:")
         
     elif call.data == "adm_ban":
         bot.set_state(call.from_user.id, AdminStates.ban_user, call.message.chat.id)
-        bot.send_message(call.message.chat.id, "Введите <b>Telegram ID</b> пользователя, которого нужно забанить:", parse_mode="HTML")
+        bot.send_message(call.message.chat.id, f"{E['user']} Введите Telegram ID для бана:")
 
     elif call.data == "adm_unban":
         bot.set_state(call.from_user.id, AdminStates.unban_user, call.message.chat.id)
-        bot.send_message(call.message.chat.id, "Введите <b>Telegram ID</b> пользователя для разбана:", parse_mode="HTML")
+        bot.send_message(call.message.chat.id, f"{E['user']} Введите Telegram ID для разбана:")
 
     elif call.data == "adm_back":
         show_admin_panel(call.message.chat.id, call.message.message_id)
@@ -287,301 +297,263 @@ def process_admin_delete(message):
     
     bot.delete_state(message.from_user.id, message.chat.id)
     if deleted > 0:
-        bot.send_message(message.chat.id, f"{E['success']} Патент {patent_number} успешно удален!")
+        bot.send_message(message.chat.id, f"{E['success']} Удалено!")
     else:
-        bot.send_message(message.chat.id, f"{E['error']} Патент {patent_number} не найден.")
+        bot.send_message(message.chat.id, f"{E['error']} Не найдено.")
     show_admin_panel(message.chat.id)
 
-@bot.message_handler(state=AdminStates.ban_user)
-def process_admin_ban(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
-    try:
-        user_id_to_ban = int(message.text.strip())
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO banned_users (user_id) VALUES (?)", (user_id_to_ban,))
-        conn.commit()
-        conn.close()
-        bot.send_message(message.chat.id, f"{E['success']} Пользователь <code>{user_id_to_ban}</code> заблокирован.", parse_mode="HTML")
-    except ValueError:
-        bot.send_message(message.chat.id, f"{E['error']} Ошибка! ID должен состоять только из цифр.")
+# Одобрение / Отклонение патентов из антиплагиата
+@bot.callback_query_handler(func=lambda call: call.data.startswith("resolve_"))
+def admin_resolve_patent(call):
+    if call.from_user.id != ADMIN_ID:
+        return
     
-    show_admin_panel(message.chat.id)
-
-@bot.message_handler(state=AdminStates.unban_user)
-def process_admin_unban(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
-    try:
-        user_id_to_unban = int(message.text.strip())
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id_to_unban,))
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
-        if deleted > 0:
-            bot.send_message(message.chat.id, f"{E['success']} Пользователь <code>{user_id_to_unban}</code> разбанен.", parse_mode="HTML")
-        else:
-            bot.send_message(message.chat.id, f"{E['warn']} Пользователь <code>{user_id_to_unban}</code> не был в бане.", parse_mode="HTML")
-    except ValueError:
-        bot.send_message(message.chat.id, f"{E['error']} Ошибка! ID должен состоять только из цифр.")
+    _, action, patent_number = call.data.split("_")
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
     
-    show_admin_panel(message.chat.id)
+    if action == "approve":
+        cursor.execute("UPDATE patents SET status='APPROVED' WHERE patent_number=?", (patent_number,))
+        bot.edit_message_text(f"{E['success']} Патент {patent_number} ОДОБРЕН модератором.", call.message.chat.id, call.message.message_id)
+        
+        # Уведомляем юзера
+        cursor.execute("SELECT user_id FROM patents WHERE patent_number=?", (patent_number,))
+        u_id = cursor.fetchone()[0]
+        try:
+            bot.send_message(u_id, f"{E['success']} Ваш патент <b>{patent_number}</b> успешно прошел проверку модератора и активирован!", parse_mode="HTML")
+        except: pass
 
+    elif action == "reject":
+        cursor.execute("SELECT user_id FROM patents WHERE patent_number=?", (patent_number,))
+        u_id = cursor.fetchone()[0]
+        cursor.execute("DELETE FROM patents WHERE patent_number=?", (patent_number,))
+        bot.edit_message_text(f"{E['error']} Патент {patent_number} ОТКЛОНЕН.", call.message.chat.id, call.message.message_id)
+        try:
+            bot.send_message(u_id, f"{E['error']} К сожалению, ваш запрос на патент был отклонен модератором (возможное совпадение).", parse_mode="HTML")
+        except: pass
+        
+    conn.commit()
+    conn.close()
 
-# --- 8. АНКЕТА СОЗДАНИЯ ПАТЕНТА ---
+# --- 8. АНКЕТА ---
 @bot.callback_query_handler(func=lambda call: call.data == "start_patent")
 def process_start_patent(call):
-    if is_user_banned(call.from_user.id):
-        bot.answer_callback_query(call.id, "Вы заблокированы.", show_alert=True)
-        return
-
+    if is_user_banned(call.from_user.id): return
     bot.set_state(call.from_user.id, PatentStates.name, call.message.chat.id)
-    bot.edit_message_text(f"{E['pencil']} Начнем регистрацию!\n\nВведите ваше <b>ФИО</b> (или имя подающего):", 
-                          chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+    bot.edit_message_text(f"{E['pencil']} Начнем! Введите ваше <b>ФИО</b>:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.name)
 def get_name(message):
     bot.add_data(message.from_user.id, message.chat.id, name=message.text)
     bot.set_state(message.from_user.id, PatentStates.username, message.chat.id)
-    bot.send_message(message.chat.id, f"Отлично {E['success']} Укажите ваш <b>юзернейм</b> (например, @username):", parse_mode="HTML")
+    bot.send_message(message.chat.id, f"{E['user']} Укажите ваш <b>юзернейм</b> (@username):", parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.username)
 def get_username(message):
     bot.add_data(message.from_user.id, message.chat.id, username=message.text)
     bot.set_state(message.from_user.id, PatentStates.project_name, message.chat.id)
-    bot.send_message(message.chat.id, f"Теперь введите <b>название вашего проекта</b>:", parse_mode="HTML")
+    bot.send_message(message.chat.id, f"{E['rocket']} Введите <b>название проекта</b>:", parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.project_name)
 def get_project_name(message):
     bot.add_data(message.from_user.id, message.chat.id, project_name=message.text)
     bot.set_state(message.from_user.id, PatentStates.project_link, message.chat.id)
-    bot.send_message(message.chat.id, f"Отправьте <b>ссылку на проект</b> {E['arrow']}", parse_mode="HTML")
+    bot.send_message(message.chat.id, f"{E['arrow']} Отправьте <b>ссылку на проект</b>:", parse_mode="HTML")
 
-# ЭТАП 1: Получаем ссылку и показываем кнопки выбора типа
 @bot.message_handler(state=PatentStates.project_link)
 def get_project_link(message):
     bot.add_data(message.from_user.id, message.chat.id, project_link=message.text)
     bot.set_state(message.from_user.id, PatentStates.patent_type, message.chat.id)
-    
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
         telebot.types.InlineKeyboardButton("💡 Идея", callback_data="type_idea"),
         telebot.types.InlineKeyboardButton("🏷 Название", callback_data="type_name")
     )
-    bot.send_message(message.chat.id, "Выберите тип патента:", reply_markup=markup)
+    bot.send_message(message.chat.id, f"{E['tag']} Выберите тип патента:", reply_markup=markup)
 
-# ЭТАП 2: Ловим нажатие кнопки и просим ввести текст
 @bot.callback_query_handler(func=lambda call: call.data in ["type_idea", "type_name"])
 def process_patent_type(call):
-    selected_type = "Идея" if call.data == "type_idea" else "Название"
-    
-    # Сохраняем тип в данные
-    bot.add_data(call.from_user.id, call.message.chat.id, patent_type=selected_type)
-    
-    # Переходим в состояние ввода текста (содержание идеи/названия)
+    p_type = "Идея" if call.data == "type_idea" else "Название"
+    bot.add_data(call.from_user.id, call.message.chat.id, patent_type=p_type)
     bot.set_state(call.from_user.id, PatentStates.patent_content, call.message.chat.id)
-    
-    bot.edit_message_text(
-        text=f"Выбрано: <b>{selected_type}</b>\n\nТеперь введите текстом вашу {selected_type.lower()}:", 
-        chat_id=call.message.chat.id, 
-        message_id=call.message.message_id, 
-        parse_mode="HTML"
-    )
+    bot.edit_message_text(f"Выбрано: <b>{p_type}</b>\n\n{E['pencil']} Подробно распишите суть:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
 
-# ЭТАП 3: Получаем текст идеи/названия и переходим к доказательствам
 @bot.message_handler(state=PatentStates.patent_content)
 def get_patent_content(message):
-    # Сохраняем сам текст, который ввел пользователь
     bot.add_data(message.from_user.id, message.chat.id, patent_content=message.text)
-    
-    # Переходим к доказательствам
     bot.set_state(message.from_user.id, PatentStates.proof, message.chat.id)
-    
-    bot.send_message(
-        message.chat.id, 
-        f"{E['siren']} Отлично! Теперь отправьте <b>доказательства</b> (фото, файл или ссылку), что это именно ваша разработка:", 
-        parse_mode="HTML"
-    )
-@bot.message_handler(state=PatentStates.proof)
+    bot.send_message(message.chat.id, f"{E['siren']} Отправьте <b>доказательства</b> (фото, документ или ссылку текстом):", parse_mode="HTML")
+
+@bot.message_handler(state=PatentStates.proof, content_types=['text', 'photo', 'document'])
 def get_proof(message):
-    bot.add_data(message.from_user.id, message.chat.id, proof=message.text)
+    # Сохраняем тип пруфа и сам контент
+    if message.photo:
+        bot.add_data(message.from_user.id, message.chat.id, proof=message.photo[-1].file_id, proof_type="PHOTO")
+    elif message.document:
+        bot.add_data(message.from_user.id, message.chat.id, proof=message.document.file_id, proof_type="DOC")
+    else:
+        bot.add_data(message.from_user.id, message.chat.id, proof=message.text, proof_type="TEXT")
+
     bot.set_state(message.from_user.id, PatentStates.management_links, message.chat.id)
-    bot.send_message(message.chat.id, f"Укажите ссылки на <b>старшее руководство</b> (через запятую):", parse_mode="HTML")
+    bot.send_message(message.chat.id, f"{E['user']} Ссылки на <b>старшее руководство</b>:", parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.management_links)
 def get_management_links(message):
     bot.add_data(message.from_user.id, message.chat.id, management_links=message.text)
-    
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
         StyledInlineKeyboardButton("Да, разрешаю", callback_data="perm_yes", style="success", icon_custom_emoji_id=BTN_E_SUCCESS),
         StyledInlineKeyboardButton("Нет, запрещаю", callback_data="perm_no", style="danger", icon_custom_emoji_id=BTN_E_DANGER)
     )
-    
-    bot.send_message(message.chat.id, f"{E['warn']} Можно ли использовать это название <b>с вашего разрешения</b> другим проектов?", 
-                     reply_markup=markup, parse_mode="HTML")
+    bot.send_message(message.chat.id, f"{E['lock']} Разрешаете использовать другим проектам?", reply_markup=markup, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: call.data in ["perm_yes", "perm_no"])
-@bot.callback_query_handler(func=lambda call: call.data in ["perm_yes", "perm_no"])
-def get_permission(call):
+def final_generation(call):
     permission = "Да" if call.data == "perm_yes" else "Нет"
-    user_id = call.from_user.id
-    
-    bot.edit_message_text(f"Вы выбрали: {permission} {E['success']}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    
-    # 1. Исправлено: корректное извлечение данных
+    bot.edit_message_text(f"Ожидайте генерации... {E['hourglass']}", chat_id=call.message.chat.id, message_id=call.message.message_id)
+
     with bot.retrieve_data(call.from_user.id, call.message.chat.id) as data:
-        name = data['name']
-        username = data['username']
-        project_name = data['project_name']
-        patent_type = data['patent_type']
-        project_link = data['project_link']
-        proof = data['proof']
+        name, username = data['name'], data['username']
+        project_name, project_link = data['project_name'], data['project_link']
+        patent_type, patent_content = data['patent_type'], data['patent_content']
+        proof, proof_type = data['proof'], data['proof_type']
         m_links = data['management_links']
-        
+
     patent_number = "KMBP-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
     date_created = datetime.now().strftime("%d.%m.%Y")
-    
-    bot.send_message(call.message.chat.id, f"{E['flash']} Генерируем ваш сертификат...", parse_mode="HTML")
-    
-    # 2. Исправлено: передаем 5 аргументов вместо 4
-    cert_image = generate_certificate(patent_number, name, project_name, patent_type, date_created)
-    
-    share_text = f"✨ Я получил патент КМБП на проект «{project_name}»!\n🆔 Номер патента: {patent_number}"
-    encoded_share_text = urllib.parse.quote(share_text)
-    
-    bot_info = bot.get_me()
-    bot_username = bot_info.username if bot_info.username else "bot"
-    share_url = f"https://t.me/share/url?url=https://t.me/{bot_username}&text={encoded_share_text}"
-    
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(StyledInlineKeyboardButton("Поделиться патентом", url=share_url, style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
-    
-    # 3. Добавили тип в описание
-    caption = (
-        f"{E['sparkles']} <b>Ваш патент успешно зарегистрирован!</b>\n\n"
-        f"🆔 Номер: <code>{patent_number}</code>\n"
-        f"🚀 Проект: <b>{project_name}</b>\n"
-        f"🏷 Тип: {patent_type}\n"
-        f"👤 Владелец: {name} ({username})\n"
-    )
-    
-    sent_msg = bot.send_photo(call.message.chat.id, photo=cert_image, caption=caption, parse_mode="HTML", reply_markup=markup)
-    cert_file_id = sent_msg.photo[-1].file_id
 
-    # 4. Исправлено: добавлен patent_type в запрос INSERT
+    # --- СИСТЕМА АНТИПЛАГИАТА ---
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    cursor.execute("SELECT patent_number FROM patents WHERE LOWER(project_name) = ? OR LOWER(patent_content) LIKE ?", 
+                   (project_name.lower(), f"%{patent_content.lower()[:20]}%"))
+    duplicate = cursor.fetchone()
+    
+    status = 'PENDING' if duplicate else 'APPROVED'
+
+    cert_image = generate_certificate(patent_number, name, project_name, patent_type, date_created)
+    
+    if status == 'APPROVED':
+        caption = (f"{E['sparkles']} <b>Патент зарегистрирован!</b>\n\n"
+                   f"{E['id']} Номер: <code>{patent_number}</code>\n"
+                   f"{E['rocket']} Проект: <b>{project_name}</b>\n"
+                   f"{E['tag']} Тип: {patent_type}")
+        sent_msg = bot.send_photo(call.message.chat.id, photo=cert_image, caption=caption, parse_mode="HTML")
+        cert_file_id = sent_msg.photo[-1].file_id
+    else:
+        # Уведомление пользователю
+        bot.send_message(call.message.chat.id, f"{E['warn']} Система нашла совпадения с существующими проектами. Ваш патент <code>{patent_number}</code> отправлен на ручную модерацию. Ожидайте решения.", parse_mode="HTML")
+        cert_file_id = "PENDING_REVIEW"
+        
+        # Уведомление админу
+        adm_markup = telebot.types.InlineKeyboardMarkup()
+        adm_markup.row(
+            telebot.types.InlineKeyboardButton("✅ Одобрить", callback_data=f"resolve_approve_{patent_number}"),
+            telebot.types.InlineKeyboardButton("❌ Отклонить", callback_data=f"resolve_reject_{patent_number}")
+        )
+        admin_text = (f"{E['flag']} <b>ПОДОЗРЕНИЕ НА ПЛАГИАТ</b>\n\n"
+                      f"Пользователь: {username}\n"
+                      f"Проект: {project_name}\n"
+                      f"Совпало с патентом: <code>{duplicate[0]}</code>\n"
+                      f"Контент: <i>{patent_content[:150]}...</i>")
+        if ADMIN_ID:
+            bot.send_message(ADMIN_ID, admin_text, reply_markup=adm_markup, parse_mode="HTML")
+
+    # Сохранение полной карточки в базу
     cursor.execute('''
-        INSERT INTO patents (patent_number, user_id, name, username, project_name, project_link, proof, management_links, permission, patent_type, date_created, cert_file_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (patent_number, user_id, name, username, project_name, project_link, proof, m_links, permission, patent_type, date_created, cert_file_id))
+        INSERT INTO patents (patent_number, user_id, name, username, project_name, project_link, proof, proof_type, patent_content, management_links, permission, patent_type, date_created, cert_file_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (patent_number, call.from_user.id, name, username, project_name, project_link, proof, proof_type, patent_content, m_links, permission, patent_type, date_created, cert_file_id, status))
     conn.commit()
     conn.close()
-
     bot.delete_state(call.from_user.id, call.message.chat.id)
 
-# --- 9. ПРОВЕРКА И СПИСКИ ПАТЕНТОВ ---
+# --- 9. ПРОВЕРКА ПАТЕНТА (ПОЛНАЯ КАРТОЧКА) ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_patent")
 def ask_patent_number(call):
-    if is_user_banned(call.from_user.id):
-        bot.answer_callback_query(call.id, "Вы заблокированы.", show_alert=True)
-        return
-
+    if is_user_banned(call.from_user.id): return
     bot.set_state(call.from_user.id, PatentStates.check_patent_number, call.message.chat.id)
-    bot.send_message(call.message.chat.id, f"{E['eyes']} Введите номер патента (например, <code>KMBP-XXXXXXX</code>):", parse_mode="HTML")
+    bot.send_message(call.message.chat.id, f"{E['eyes']} Введите номер патента:", parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.check_patent_number)
 def check_patent_db(message):
-    patent_number = message.text.strip().upper()
-    
+    p_num = message.text.strip().upper()
     conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, project_name, project_link, permission, date_created, cert_file_id FROM patents WHERE patent_number = ?", (patent_number,))
-    result = cursor.fetchone()
+    c = conn.cursor()
+    c.execute("SELECT name, project_name, patent_type, patent_content, proof, proof_type, permission, date_created, cert_file_id, status FROM patents WHERE patent_number = ?", (p_num,))
+    res = c.fetchone()
     conn.close()
-    
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(StyledInlineKeyboardButton("В главное меню", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
-
-    if result:
-        name, project_name, project_link, permission, date_created, cert_file_id = result
-        text = (
-            f"{E['green']} <b>Патент {patent_number} действителен!</b>\n\n"
-            f"👤 <b>Владелец:</b> {name}\n"
-            f"🚀 <b>Проект:</b> {project_name}\n"
-            f"🔗 <b>Ссылка:</b> {project_link}\n"
-            f"🔓 <b>Использование:</b> {permission}\n"
-            f"{E['calendar']} <b>Дата:</b> {date_created}"
-        )
-        if cert_file_id:
-            bot.send_photo(message.chat.id, photo=cert_file_id, caption=text, parse_mode="HTML", reply_markup=markup)
-        else:
-            bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-    else:
-        bot.send_message(message.chat.id, f"{E['error']} Патент <code>{patent_number}</code> не найден в базе.", reply_markup=markup, parse_mode="HTML")
-        
     bot.delete_state(message.from_user.id, message.chat.id)
 
-@bot.callback_query_handler(func=lambda call: call.data == "my_patents")
-def show_my_patents(call):
-    if is_user_banned(call.from_user.id):
-        bot.answer_callback_query(call.id, "Вы заблокированы.", show_alert=True)
-        return
+    if not res:
+        return bot.send_message(message.chat.id, f"{E['error']} Патент не найден.", parse_mode="HTML")
+    
+    name, p_name, p_type, p_content, proof, proof_type, perm, date, cert_id, status = res
+    
+    if status == 'PENDING':
+        return bot.send_message(message.chat.id, f"{E['hourglass']} Патент <code>{p_num}</code> находится на модерации.", parse_mode="HTML")
 
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT patent_number, project_name FROM patents WHERE user_id = ?", (call.from_user.id,))
-    results = cursor.fetchall()
-    conn.close()
+    text = (f"{E['green']} <b>Карточка патента: {p_num}</b>\n\n"
+            f"{E['user']} <b>Владелец:</b> {name}\n"
+            f"{E['rocket']} <b>Проект:</b> {p_name}\n"
+            f"{E['tag']} <b>Тип:</b> {p_type}\n"
+            f"📝 <b>Суть:</b> <i>{p_content}</i>\n"
+            f"{E['lock']} <b>Право доступа:</b> {perm}\n"
+            f"{E['calendar']} <b>Дата:</b> {date}")
 
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(StyledInlineKeyboardButton("Назад", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
-    
-    if not results:
-        bot.edit_message_text(f"{E['warn']} У вас пока нет зарегистрированных патентов.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-        return
+    markup.add(StyledInlineKeyboardButton("В меню", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
 
-    text = f"{E['star']} <b>Ваши патенты:</b>\n\n"
-    for idx, row in enumerate(results, 1):
-        text += f"{idx}. <b>{row[1]}</b> — <code>{row[0]}</code>\n"
-    
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+    # Вывод с доказательствами
+    if proof_type == "PHOTO" and cert_id != "PENDING_REVIEW":
+        media = [telebot.types.InputMediaPhoto(cert_id, caption=text, parse_mode="HTML"),
+                 telebot.types.InputMediaPhoto(proof, caption=f"{E['siren']} Прикрепленное доказательство")]
+        bot.send_media_group(message.chat.id, media)
+        bot.send_message(message.chat.id, "Действия:", reply_markup=markup)
+    elif proof_type == "DOC" and cert_id != "PENDING_REVIEW":
+        bot.send_photo(message.chat.id, photo=cert_id, caption=text, parse_mode="HTML")
+        bot.send_document(message.chat.id, proof, caption="Доказательство", reply_markup=markup)
+    else:
+        text += f"\n🔗 <b>Доказательство:</b> {proof}"
+        if cert_id != "PENDING_REVIEW":
+            bot.send_photo(message.chat.id, photo=cert_id, caption=text, parse_mode="HTML", reply_markup=markup)
+        else:
+            bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
 
-@bot.callback_query_handler(func=lambda call: call.data == "recent_patents")
-def show_recent_patents(call):
-    if is_user_banned(call.from_user.id):
-        bot.answer_callback_query(call.id, "Вы заблокированы.", show_alert=True)
-        return
-
+@bot.callback_query_handler(func=lambda call: call.data in ["my_patents", "recent_patents"])
+def show_lists(call):
     conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT patent_number, project_name, date_created FROM patents ORDER BY rowid DESC LIMIT 3")
-    results = cursor.fetchall()
+    c = conn.cursor()
+    if call.data == "my_patents":
+        c.execute("SELECT patent_number, project_name, status FROM patents WHERE user_id = ?", (call.from_user.id,))
+        res = c.fetchall()
+        title = f"{E['star']} <b>Ваши патенты:</b>\n"
+    else:
+        c.execute("SELECT patent_number, project_name, status FROM patents WHERE status='APPROVED' ORDER BY rowid DESC LIMIT 5")
+        res = c.fetchall()
+        title = f"{E['chart']} <b>Последние патенты:</b>\n"
     conn.close()
 
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(StyledInlineKeyboardButton("Назад", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
-    
-    if not results:
-        bot.edit_message_text("База патентов пока пуста.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-        return
+    markup = telebot.types.InlineKeyboardMarkup().add(StyledInlineKeyboardButton("Назад", callback_data="back_main", style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
+    if not res:
+        return bot.edit_message_text("Пусто.", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    text = f"{E['chart']} <b>Последние зарегистрированные патенты:</b>\n\n"
-    for row in results:
-        text += f"{E['rainbow']} <b>{row[1]}</b> (от {row[2]})\n🆔 <code>{row[0]}</code>\n\n"
-        
+    text = title + "\n".join([f"• <b>{r[1]}</b> — <code>{r[0]}</code> {'(На модерации)' if r[2]=='PENDING' else ''}" for r in res])
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_main")
-def back_to_main(call):
-    bot.delete_state(call.from_user.id, call.message.chat.id)
+def back_main(call):
     bot.delete_message(call.message.chat.id, call.message.message_id)
     send_welcome(call.message)
 
 bot.add_custom_filter(custom_filters.StateFilter(bot))
 
 if __name__ == "__main__":
-    print("Бот Патент КМБП (Премиум + ID Админка) запущен!")
-    bot.infinity_polling()
+    print("Бот Патент КМБП (v2: Антиплагиат + Премиум UI) запущен!")
+    # Устойчивый цикл, чтобы бот не падал при обрывах сети Telegram
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+        except Exception as e:
+            print(f"Ошибка сети: {e}. Переподключение через 5 секунд...")
+            time.sleep(5)
