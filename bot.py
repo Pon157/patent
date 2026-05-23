@@ -220,21 +220,28 @@ def generate_certificate(patent_number, name, project_name, patent_type, date_st
 def show_patent_card(chat_id, user_id, p_num):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT name, project_name, patent_type, patent_content, proof, proof_type, permission, date_created, cert_file_id, status, proof_text FROM patents WHERE patent_number = ?", (p_num,))
+    # Добавили username и project_link в SELECT
+    c.execute("SELECT name, username, project_name, project_link, patent_type, patent_content, proof, proof_type, permission, date_created, cert_file_id, status, proof_text FROM patents WHERE patent_number = ?", (p_num,))
     res = c.fetchone()
     conn.close()
 
     if not res:
         return bot.send_message(chat_id, f"{E['error']} Патент <code>{p_num}</code> не найден.", parse_mode="HTML")
     
-    name, p_name, p_type, p_content, proof, proof_type, perm, date, cert_id, status, proof_text = res
+    # Распаковка обновленных данных
+    name, username, p_name, p_link, p_type, p_content, proof, proof_type, perm, date, cert_id, status, proof_text = res
     
     if status == 'PENDING':
         return bot.send_message(chat_id, f"{E['hourglass']} Патент <code>{p_num}</code> находится на модерации и пока недоступен для публичного просмотра.", parse_mode="HTML")
 
+    # Формируем текст с новыми полями
+    # Если юзернейм указан без @, добавляем его сами
+    display_user = f"@{username.lstrip('@')}" 
+    
     text = (f"{E['green']} <b>Карточка патента: {p_num}</b>\n\n"
-            f"{E['user']} <b>Владелец:</b> {name}\n"
+            f"{E['user']} <b>Владелец:</b> {name} ({display_user})\n"
             f"{E['rocket']} <b>Проект:</b> {p_name}\n"
+            f"{E['arrow']} <b>Ссылка на проект:</b> {p_link}\n"
             f"{E['tag']} <b>Тип:</b> {p_type}\n"
             f"{E['pencil']} <b>Суть:</b> <i>{p_content[:500]}</i>\n"
             f"{E['lock']} <b>Право доступа:</b> {perm}\n"
@@ -248,7 +255,7 @@ def show_patent_card(chat_id, user_id, p_num):
     else:
         bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
 
-    # Вывод доказательства с текстом (если есть)
+    # Вывод доказательства
     proof_caption = f"{E['siren']} <b>Прикрепленное доказательство</b>"
     if proof_text:
         proof_caption += f"\n\n<b>Описание:</b> {proof_text}"
@@ -259,7 +266,6 @@ def show_patent_card(chat_id, user_id, p_num):
         bot.send_document(chat_id, proof, caption=proof_caption, parse_mode="HTML")
     elif proof_type == "TEXT":
         bot.send_message(chat_id, f"{E['siren']} <b>Прикрепленное доказательство (Текст/Ссылка):</b>\n{proof}", parse_mode="HTML")
-
 
 # --- 7. ОСНОВНОЕ МЕНЮ И ДИПЛИНКИ ---
 @bot.message_handler(commands=['start'])
