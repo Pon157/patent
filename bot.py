@@ -97,8 +97,8 @@ def p_emoji(emoji_char, emoji_id):
 
 E = {
     "star": p_emoji("⭐️", "5438496463044752972"),
-    "success": p_emoji("✔️", "5416076321442777828"),
-    "error": p_emoji("❌", "5456302074604035284"),
+    "success": p_emoji("✔️", "5206607081334906820"),
+    "error": p_emoji("❌", "5416076321442777828"),
     "warn": p_emoji("⚠️", "5240241223632954241"),
     "flash": p_emoji("⚡️", "5456606106748983383"),
     "eyes": p_emoji("👀", "5240241223632954241"),
@@ -445,7 +445,7 @@ def process_patent_type(call):
     p_type = "Идея" if call.data == "type_idea" else "Название"
     bot.add_data(call.from_user.id, call.message.chat.id, patent_type=p_type)
     bot.set_state(call.from_user.id, PatentStates.patent_content, call.message.chat.id)
-    bot.edit_message_text(f"Выбрано: <b>{p_type}</b>\n\n{E['pencil']} Подробно распишите суть:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+    bot.edit_message_text(f"Выбрано: <b>{p_type}</b>\n\n{E['pencil']} Напишите идею/название", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
 
 @bot.message_handler(state=PatentStates.patent_content)
 def get_patent_content(message):
