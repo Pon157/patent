@@ -488,7 +488,7 @@ def final_generation(call):
         project_name, project_link = data['project_name'], data['project_link']
         patent_type, patent_content = data['patent_type'], data['patent_content']
         proof, proof_type = data['proof'], data['proof_type']
-        proof_text = data.get('proof_text', '') # Достаем текст доказательства
+        proof_text = data.get('proof_text', '') 
         m_links = data['management_links']
 
     patent_number = "KMBP-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
@@ -502,7 +502,6 @@ def final_generation(call):
 
     duplicate_id = None
     for pid, p_name, p_content in all_patents:
-        # Сравниваем названия или содержимое (с порогом схожести 85%)
         if is_similar(project_name, p_name) or is_similar(patent_content, p_content):
             duplicate_id = pid
             break
@@ -534,18 +533,31 @@ def final_generation(call):
             telebot.types.InlineKeyboardButton("Одобрить", callback_data=f"resolve_approve_{patent_number}"),
             telebot.types.InlineKeyboardButton("Отклонить", callback_data=f"resolve_reject_{patent_number}")
         )
+        
         admin_text = (f"{E['flag']} <b>ПОДОЗРЕНИЕ НА ПЛАГИАТ (Умный фильтр)</b>\n\n"
-                      f"{E['user']} Пользователь: {username}\n"
+                      f"{E['user']} Пользователь: @{username}\n"
                       f"{E['rocket']} Проект: {project_name}\n"
                       f"{E['id']} Совпало с патентом: <code>{duplicate_id}</code>\n"
-                      f"{E['pencil']} Контент: <i>{patent_content[:150]}...</i>")
+                      f"{E['pencil']} Контент: <i>{patent_content[:150]}...</i>\n\n"
+                      f"{E['siren']} <b>Доказательства:</b>")
+
         if ADMIN_ID:
-            bot.send_message(ADMIN_ID, admin_text, reply_markup=adm_markup, parse_mode="HTML")
+            bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
+            # Отправка самих докв админу
+            if proof_type == "PHOTO" and proof:
+                bot.send_photo(ADMIN_ID, photo=proof, caption=f"Описание: {proof_text}" if proof_text else None)
+            elif proof_type == "DOC" and proof:
+                bot.send_document(ADMIN_ID, document=proof, caption=f"Описание: {proof_text}" if proof_text else None)
+            elif proof_type == "TEXT":
+                bot.send_message(ADMIN_ID, f"Текст доказательства:\n{proof}", parse_mode="HTML")
+            
+            bot.send_message(ADMIN_ID, "Выберите решение по патенту:", reply_markup=adm_markup)
 
     cursor.execute('''
         INSERT INTO patents (patent_number, user_id, name, username, project_name, project_link, proof, proof_type, patent_content, management_links, permission, patent_type, date_created, cert_file_id, status, proof_text)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (patent_number, call.from_user.id, name, username, project_name, project_link, proof, proof_type, patent_content, m_links, permission, patent_type, date_created, cert_file_id, status, proof_text))
+    
     conn.commit()
     conn.close()
     bot.delete_state(call.from_user.id, call.message.chat.id)
