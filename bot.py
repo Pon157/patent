@@ -127,6 +127,7 @@ class PatentStates(StatesGroup):
     proof = State()
     management_links = State()
     check_patent_number = State()
+    patent_content = State()
 
 class AdminStates(StatesGroup):
     delete_patent = State()
@@ -354,38 +355,51 @@ def get_project_name(message):
     bot.set_state(message.from_user.id, PatentStates.project_link, message.chat.id)
     bot.send_message(message.chat.id, f"Отправьте <b>ссылку на проект</b> {E['arrow']}", parse_mode="HTML")
 
-# ЭТАП 1: Получаем ссылку и показываем кнопки
+# ЭТАП 1: Получаем ссылку и показываем кнопки выбора типа
 @bot.message_handler(state=PatentStates.project_link)
 def get_project_link(message):
     bot.add_data(message.from_user.id, message.chat.id, project_link=message.text)
-    # Переходим в состояние выбора типа
     bot.set_state(message.from_user.id, PatentStates.patent_type, message.chat.id)
     
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
-        telebot.types.InlineKeyboardButton("Идея", callback_data="type_idea"),
-        telebot.types.InlineKeyboardButton("Название", callback_data="type_name")
+        telebot.types.InlineKeyboardButton("💡 Идея", callback_data="type_idea"),
+        telebot.types.InlineKeyboardButton("🏷 Название", callback_data="type_name")
     )
     bot.send_message(message.chat.id, "Выберите тип патента:", reply_markup=markup)
 
-# ЭТАП 2: Ловим нажатие кнопки и переходим к доказательствам
+# ЭТАП 2: Ловим нажатие кнопки и просим ввести текст
 @bot.callback_query_handler(func=lambda call: call.data in ["type_idea", "type_name"])
 def process_patent_type(call):
-    # Определяем, что выбрал пользователь
     selected_type = "Идея" if call.data == "type_idea" else "Название"
     
     # Сохраняем тип в данные
     bot.add_data(call.from_user.id, call.message.chat.id, patent_type=selected_type)
     
-    # Переходим в состояние для доказательств
-    bot.set_state(call.from_user.id, PatentStates.proof, call.message.chat.id)
+    # Переходим в состояние ввода текста (содержание идеи/названия)
+    bot.set_state(call.from_user.id, PatentStates.patent_content, call.message.chat.id)
     
-    # Отвечаем пользователю и просим доказательства
     bot.edit_message_text(
-        text=f"Выбрано: <b>{selected_type}</b>\n\n{E['siren']} Теперь отправьте <b>доказательства</b>, что это именно ваша идея/название:", 
+        text=f"Выбрано: <b>{selected_type}</b>\n\nТеперь введите текстом вашу {selected_type.lower()}:", 
         chat_id=call.message.chat.id, 
         message_id=call.message.message_id, 
         parse_mode="HTML"
+    )
+
+# ЭТАП 3: Получаем текст идеи/названия и переходим к доказательствам
+@bot.message_handler(state=PatentStates.patent_content)
+def get_patent_content(message):
+    # Сохраняем сам текст, который ввел пользователь
+    bot.add_data(message.from_user.id, message.chat.id, patent_content=message.text)
+    
+    # Переходим к доказательствам
+    bot.set_state(message.from_user.id, PatentStates.proof, message.chat.id)
+    
+    bot.send_message(
+        message.chat.id, 
+        f"{E['siren']} Отлично! Теперь отправьте <b>доказательства</b> (фото, файл или ссылку), что это именно ваша разработка:", 
+        parse_mode="HTML"
+    )"
     )
 @bot.message_handler(state=PatentStates.proof)
 def get_proof(message):
@@ -407,21 +421,30 @@ def get_management_links(message):
                      reply_markup=markup, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: call.data in ["perm_yes", "perm_no"])
+@bot.callback_query_handler(func=lambda call: call.data in ["perm_yes", "perm_no"])
 def get_permission(call):
     permission = "Да" if call.data == "perm_yes" else "Нет"
     user_id = call.from_user.id
     
     bot.edit_message_text(f"Вы выбрали: {permission} {E['success']}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
     
+    # 1. Исправлено: корректное извлечение данных
     with bot.retrieve_data(call.from_user.id, call.message.chat.id) as data:
-        name, username, project_name = data['name'], data['username'], data['project_name'], patent_type = data['patent_type']
-        project_link, proof, m_links = data['project_link'], data['proof'], data['management_links']
+        name = data['name']
+        username = data['username']
+        project_name = data['project_name']
+        patent_type = data['patent_type']
+        project_link = data['project_link']
+        proof = data['proof']
+        m_links = data['management_links']
         
     patent_number = "KMBP-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
     date_created = datetime.now().strftime("%d.%m.%Y")
     
     bot.send_message(call.message.chat.id, f"{E['flash']} Генерируем ваш сертификат...", parse_mode="HTML")
-    cert_image = generate_certificate(patent_number, name, project_name, date_created)
+    
+    # 2. Исправлено: передаем 5 аргументов вместо 4
+    cert_image = generate_certificate(patent_number, name, project_name, patent_type, date_created)
     
     share_text = f"✨ Я получил патент КМБП на проект «{project_name}»!\n🆔 Номер патента: {patent_number}"
     encoded_share_text = urllib.parse.quote(share_text)
@@ -433,27 +456,29 @@ def get_permission(call):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(StyledInlineKeyboardButton("Поделиться патентом", url=share_url, style="primary", icon_custom_emoji_id=BTN_E_PRIMARY))
     
+    # 3. Добавили тип в описание
     caption = (
         f"{E['sparkles']} <b>Ваш патент успешно зарегистрирован!</b>\n\n"
         f"🆔 Номер: <code>{patent_number}</code>\n"
         f"🚀 Проект: <b>{project_name}</b>\n"
+        f"🏷 Тип: {patent_type}\n"
         f"👤 Владелец: {name} ({username})\n"
     )
     
     sent_msg = bot.send_photo(call.message.chat.id, photo=cert_image, caption=caption, parse_mode="HTML", reply_markup=markup)
     cert_file_id = sent_msg.photo[-1].file_id
 
+    # 4. Исправлено: добавлен patent_type в запрос INSERT
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO patents (patent_number, user_id, name, username, project_name, project_link, proof, management_links, permission, date_created, cert_file_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (patent_number, user_id, name, username, project_name, project_link, proof, m_links, permission, date_created, cert_file_id))
+        INSERT INTO patents (patent_number, user_id, name, username, project_name, project_link, proof, management_links, permission, patent_type, date_created, cert_file_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (patent_number, user_id, name, username, project_name, project_link, proof, m_links, permission, patent_type, date_created, cert_file_id))
     conn.commit()
     conn.close()
 
     bot.delete_state(call.from_user.id, call.message.chat.id)
-
 
 # --- 9. ПРОВЕРКА И СПИСКИ ПАТЕНТОВ ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_patent")
