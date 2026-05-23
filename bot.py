@@ -136,30 +136,29 @@ class AdminStates(StatesGroup):
 
 # --- 5. ГЕНЕРАЦИЯ СЕРТИФИКАТА ---
 def generate_certificate(patent_number, name, project_name, patent_type, date_str):
-    # Добавим дебаг: если в консоли пусто, значит проблема в данных, а не в шрифте
     print(f"DEBUG: Data -> {name}, {project_name}, {patent_type}, {patent_number}")
     
     img = Image.new('RGB', (1000, 700), color=(240, 248, 255))
     draw = ImageDraw.Draw(img)
 
-    # 1. Укажи путь к шрифту (загрузи arial.ttf в папку /root/patent/)
-    font_path = os.path.join(os.path.dirname(__file__), "arial.ttf")
+    # Используем системный шрифт, найденный на сервере
+    font_path = "/usr/share/fonts/truetype/lato/Lato-Medium.ttf"
     
-    # Если файла нет, используем default, но с предупреждением
-    if not os.path.exists(font_path):
-        print(f"ВНИМАНИЕ: Файл шрифта {font_path} не найден!")
-        font_title = ImageFont.load_default()
-        font_text = ImageFont.load_default()
-        font_highlight = ImageFont.load_default()
-    else:
+    try:
+        # Пытаемся загрузить шрифт
         font_title = ImageFont.truetype(font_path, 60)
         font_text = ImageFont.truetype(font_path, 30)
         font_highlight = ImageFont.truetype(font_path, 35)
+    except Exception as e:
+        print(f"DEBUG: Ошибка загрузки системного шрифта {font_path}: {e}. Использую дефолтный.")
+        font_title = ImageFont.load_default()
+        font_text = ImageFont.load_default()
+        font_highlight = ImageFont.load_default()
 
     # Рамки
     draw.rectangle([30, 30, 970, 670], outline=(70, 130, 180), width=15)
     
-    # Заголовок
+    # Заголовок (по центру)
     draw.text((500, 100), "ПАТЕНТ КМБП", font=font_title, fill=(25, 25, 112), anchor="mm")
 
     # Рисуем текст
@@ -181,7 +180,6 @@ def generate_certificate(patent_number, name, project_name, patent_type, date_st
     img.save(bio, format='PNG')
     bio.seek(0)
     return bio
-
 # --- 6. ОСНОВНОЕ МЕНЮ ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
